@@ -21,6 +21,7 @@
 //! El telón no agarra clics (región de input vacía) y si nadie lo revela se
 //! abre solo a los 15 s.
 
+mod arte;
 mod fx;
 mod paint;
 
@@ -108,6 +109,8 @@ fn main() {
             0
         }
         Some("active") => i32::from(running().is_none()),
+        // el arte de "actualizar discada", en la terminal
+        Some(what @ ("meneo" | "lista")) => arte::run(what, args.get(2).map(String::as_str)),
         Some("_run") => match run(Opts::parse(&args[2..])) {
             Ok(()) => 0,
             Err(e) => {
@@ -116,7 +119,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("uso: farula freeze | reveal [fx] | demo [fx] | list | active");
+            eprintln!("uso: farula freeze | reveal [fx] | demo [fx] | list | active | meneo [s] | lista [s]");
             2
         }
     };
