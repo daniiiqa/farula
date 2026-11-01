@@ -12,6 +12,10 @@ farula reveal [efecto]                   abrir
 farula demo [efecto]                     congelar y abrir, para verlo
 farula list                              los efectos
 farula active                            sale con 0 si hay telón puesto
+farula meneo [segundos]                  en la terminal: la discada meneándose
+                                         con la cuchara (al empezar a actualizar)
+farula lista [segundos]                  en la terminal: el vaquero bailando
+                                         (al terminar; DISCADA_SIN_ARTE lo quita)
 ```
 
 Efectos: iris, quemado, glitch, vidrio, derretido, fade, crt, azulejos,
