@@ -23,9 +23,10 @@ pub enum Fx {
     Tinta,
     Wipe,
     Pixelado,
+    Humo,
 }
 
-pub const ALL: [Fx; 13] = [
+pub const ALL: [Fx; 14] = [
     Fx::Iris,
     Fx::Quemado,
     Fx::Glitch,
@@ -39,6 +40,7 @@ pub const ALL: [Fx; 13] = [
     Fx::Tinta,
     Fx::Wipe,
     Fx::Pixelado,
+    Fx::Humo,
 ];
 
 impl Fx {
@@ -57,6 +59,7 @@ impl Fx {
             "tinta" | "ink" => Fx::Tinta,
             "wipe" | "barrida" => Fx::Wipe,
             "pixelado" | "pixel" => Fx::Pixelado,
+            "humo" | "smoke" => Fx::Humo,
             _ => return None,
         })
     }
@@ -75,6 +78,7 @@ impl Fx {
             Fx::Tinta => "tinta",
             Fx::Wipe => "wipe",
             Fx::Pixelado => "pixelado",
+            Fx::Humo => "humo",
         }
     }
     /// Cuánto dura el reveal (segundos).
@@ -93,6 +97,7 @@ impl Fx {
             Fx::Tinta => 1.4,
             Fx::Wipe => 0.7,
             Fx::Pixelado => 1.0,
+            Fx::Humo => 2.0,
         }
     }
 }
@@ -122,6 +127,7 @@ pub enum Data {
     Vidrio(Vidrio),
     Derretido(Vec<f32>),
     Tinta(Vec<u16>),
+    Humo(Humo),
 }
 
 pub fn prepare(fx: Fx, s: &Scene) -> Data {
@@ -130,6 +136,7 @@ pub fn prepare(fx: Fx, s: &Scene) -> Data {
         Fx::Vidrio => Data::Vidrio(Vidrio::new(s)),
         Fx::Derretido => Data::Derretido(melt_delays(s)),
         Fx::Tinta => Data::Tinta(ink_field(s)),
+        Fx::Humo => Data::Humo(Humo::new(s)),
         _ => Data::Nada,
     }
 }
@@ -152,6 +159,7 @@ pub fn paint(fx: Fx, data: &Data, canvas: &mut [u8], s: &Scene) {
         (Fx::Tinta, Data::Tinta(f)) => tinta(canvas, s, f),
         (Fx::Wipe, _) => wipe(canvas, s),
         (Fx::Pixelado, _) => pixelado(canvas, s),
+        (Fx::Humo, Data::Humo(h)) => h.paint(canvas, s),
         _ => iris(canvas, s),
     }
 }
@@ -1014,4 +1022,81 @@ fn pixelado(canvas: &mut [u8], s: &Scene) {
             dim_px(d, &s.base[(by * s.w + bx) * 4..][..4], ki);
         }
     });
+}
+
+// ─── humo ───────────────────────────────────────────────────────────────────
+
+/// La pantalla vieja se hace humo: se deshace de abajo hacia arriba con
+/// orillas de ruido; lo sólido se queda quieto y solo lo que ya es humo sube y
+/// se enrosca, pálido y cada vez más delgado (con un dejo del acento). Lo caro
+/// (los dos ruidos) se calcula una vez.
+pub struct Humo {
+    /// cuándo se va cada pixel (0..1): ruido grande más la altura
+    when: Vec<u16>,
+    /// hacia dónde se enrosca cada pixel (-127..127): ruido suave
+    swirl: Vec<i8>,
+}
+
+impl Humo {
+    fn new(s: &Scene) -> Humo {
+        let n = noise_field(s, 200.0);
+        let m = noise_field(&Scene { seed: s.seed ^ 0x9e37_79b9, ..*s }, 160.0);
+        let mut when = vec![0u16; s.w * s.h];
+        let mut swirl = vec![0i8; s.w * s.h];
+        for y in 0..s.h {
+            // abajo se va primero, como el humo que se aleja de la brasa
+            let up = 1.0 - y as f32 / s.h.max(1) as f32;
+            for x in 0..s.w {
+                let i = y * s.w + x;
+                when[i] = ((0.6 * n[i] + 0.4 * up).clamp(0.0, 1.0) * 65535.0) as u16;
+                swirl[i] = ((m[i] - 0.5) * 2.0 * 127.0).clamp(-127.0, 127.0) as i8;
+            }
+        }
+        Humo { when, swirl }
+    }
+
+    fn paint(&self, canvas: &mut [u8], s: &Scene) {
+        const BAND: f32 = 0.34; // lo que tarda un pixel en hacerse humo
+        let th = smooth(s.t) * (1.0 + BAND);
+        // cuánto sube y se enrosca lo que ya es humo (pixeles del buffer)
+        let rise = 120.0 * s.sf;
+        let curl = 45.0 * s.sf;
+        let k = 1.0 - s.dim;
+        let ki = (k * 256.0) as u32;
+        let tint = mix([0.86, 0.86, 0.9], s.accent, 0.15);
+        let (w, h) = (s.w as i32, s.h as i32);
+        // qué tanto es humo un pixel (0 sólido, 1 ya se fue)
+        let gone = |v: f32| smooth(1.0 - (v - (th - BAND)) / BAND);
+        par_rows(canvas, s.w, |y, row| {
+            for (x, d) in row.chunks_exact_mut(4).enumerate() {
+                let i = y * s.w + x;
+                let q = gone(self.when[i] as f32 / 65535.0);
+                if q >= 1.0 {
+                    d.copy_from_slice(&[0, 0, 0, 0]);
+                    continue;
+                }
+                // todavía sólido: la foto quieta (lo más común al empezar)
+                if q <= 0.0 {
+                    dim_px(d, &s.base[i * 4..i * 4 + 4], ki);
+                    continue;
+                }
+                // lo que se ve aquí viene de más abajo y de un lado: sube
+                let c = self.swirl[i] as f32 / 127.0;
+                let sx = (x as f32 + c * curl * q).round() as i32;
+                let sy = (y as f32 + rise * q * (0.75 + 0.25 * c.abs())).round() as i32;
+                if sy >= h {
+                    d.copy_from_slice(&[0, 0, 0, 0]);
+                    continue;
+                }
+                let j = (sy.max(0) * w + sx.clamp(0, w - 1)) as usize;
+                let g = gone(self.when[j] as f32 / 65535.0).max(q);
+                let o = old(&s.base[j * 4..j * 4 + 4], k);
+                // al irse, del color de la foto a un humo pálido y delgado
+                let col = mix(o, tint, g.sqrt() * 0.85);
+                let rest = 1.0 - g;
+                let al = rest * rest.sqrt();
+                put(d, col[0] * al, col[1] * al, col[2] * al, al);
+            }
+        });
+    }
 }

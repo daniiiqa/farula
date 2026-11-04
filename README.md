@@ -19,7 +19,7 @@ farula lista [segundos]                  en la terminal: el vaquero bailando
 ```
 
 Efectos: iris, quemado, glitch, vidrio, derretido, fade, crt, azulejos,
-cartas, onda, tinta, wipe, pixelado (o `random`). Cada look elige el suyo en
+cartas, onda, tinta, wipe, pixelado, humo (o `random`). Cada look elige el suyo en
 su `look.toml`:
 
 ```toml
